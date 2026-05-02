@@ -7,11 +7,8 @@
     "jsxImportSource": "react",
     "strict": true,
     "lib": ["ES2022", "DOM"],
-    "types": ["node"],
-    "paths": {
-      "@/*": ["./resources/js/*"]
-    },
+    "types": ["vite/client", "node"],
     "noEmit": true
   },
-  "include": ["app/**/*", "resources/**/*", "vite.config.ts"]
+  "include": ["app/**/*", "vite.config.ts"]
 }

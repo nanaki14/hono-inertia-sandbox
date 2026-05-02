@@ -1,61 +1,71 @@
-import { createApp } from 'honox/server'
+import { Hono } from 'hono'
+import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { inertia } from '@hono/inertia'
-// createInertiaApp を server-side で呼ぶことで
-// buildSSRBody 互換の { head, body } が返り、正確なハイドレーションが可能になる
-import { createInertiaApp } from '@inertiajs/react'
-import { renderToString } from 'react-dom/server'
-import { createElement } from 'react'
-import { AppProvider } from '../resources/js/context/AppContext'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
+import { rootView } from './root-view'
+import { createUser, findUser, listUsers } from './data'
 
-// SSR 用にページコンポーネントをビルド時に一括インポート
-const pageModules = import.meta.glob('../resources/js/pages/**/*.tsx', {
-  eager: true,
+const app = new Hono()
+
+if (!import.meta.env.DEV) {
+  app.use('/assets/*', serveStatic({ root: './dist/client' }))
+}
+
+app.use(inertia({ rootView }))
+
+const userInput = z.object({
+  name: z.string().min(1, '名前は必須です'),
+  email: z.string().email('正しいメールアドレスを入力してください'),
+  bio: z.string().default(''),
 })
 
-const app = createApp({
-  init(app) {
-    app.use(
-      '*',
-      inertia({
-        version: '1',
-        async rootView(page) {
-          // createInertiaApp をサーバー側で実行（page + render を渡すと SSR モードになる）
-          // 返り値: { head: string[], body: string }
-          // body = buildSSRBody の出力:
-          //   <script data-page="app" type="application/json">...</script>
-          //   <div id="app" data-server-rendered="true">...SSR html...</div>
-          const result = (await createInertiaApp({
-            page,
-            render: renderToString,
-            resolve(name) {
-              const key = `../resources/js/pages/${name}.tsx`
-              const mod = pageModules[key] as { default: unknown }
-              return mod.default
-            },
-            // setup は el: null（サーバー）で呼ばれ、React 要素を返す
-            // AppProvider を外側に置くことでサーバーとクライアントのツリーを一致させる
-            setup({ App, props }) {
-              return createElement(AppProvider, null, createElement(App, props))
-            },
-          })) as { head: string[]; body: string }
+const routes = app
+  .get('/', (c) => c.render('Home', { message: 'Hono + Inertia + React' }))
+  .get('/counter', (c) => c.render('Counter', {}))
+  .get('/users', (c) => c.render('Users/Index', { users: listUsers() }))
+  .get('/users/new', (c) =>
+    c.render('Users/New', {
+      values: { name: '', email: '', bio: '' },
+      errors: {} as Record<string, string>,
+    })
+  )
+  .get('/users/:id{[0-9]+}', (c) => {
+    const id = Number(c.req.param('id'))
+    const user = findUser(id)
+    if (!user) return c.notFound()
+    return c.render('Users/Show', { user })
+  })
+  .post(
+    '/users',
+    zValidator('form', userInput, (result, c) => {
+      if (!result.success) {
+        const errors: Record<string, string> = {}
+        for (const issue of result.error.issues) {
+          if (issue.path.length > 0) {
+            errors[String(issue.path[0])] = issue.message
+          }
+        }
+        return c.render('Users/New', {
+          values: { name: '', email: '', bio: '' },
+          errors,
+        })
+      }
+    }),
+    (c) => {
+      const data = c.req.valid('form')
+      const user = createUser(data)
+      return c.redirect(`/users/${user.id}`, 303)
+    }
+  )
 
-          return `<!DOCTYPE html>
-<html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hono + Inertia + React</title>
-    ${result.head.join('\n    ')}
-  </head>
-  <body>
-    ${result.body}
-    <script type="module" src="/resources/js/app.tsx"></script>
-  </body>
-</html>`
-        },
-      }),
-    )
-  },
-})
+export type AppType = typeof routes
 
-export default app
+export default routes
+
+if (!import.meta.env.DEV) {
+  serve({ fetch: app.fetch, port: Number(process.env.PORT ?? 3000) }, (info) => {
+    console.log(`Listening on http://localhost:${info.port}`)
+  })
+}
