@@ -17,7 +17,7 @@ app.use(inertia({ rootView }))
 
 const userInput = z.object({
   name: z.string().min(1, '名前は必須です'),
-  email: z.string().email('正しいメールアドレスを入力してください'),
+  email: z.email('正しいメールアドレスを入力してください'),
   bio: z.string().default(''),
 })
 
@@ -39,7 +39,7 @@ const routes = app
   })
   .post(
     '/users',
-    zValidator('form', userInput, (result, c) => {
+    zValidator('json', userInput, (result, c) => {
       if (!result.success) {
         const errors: Record<string, string> = {}
         for (const issue of result.error.issues) {
@@ -47,14 +47,19 @@ const routes = app
             errors[String(issue.path[0])] = issue.message
           }
         }
+        const raw = result.data as Record<string, unknown>
         return c.render('Users/New', {
-          values: { name: '', email: '', bio: '' },
+          values: {
+            name: typeof raw.name === 'string' ? raw.name : '',
+            email: typeof raw.email === 'string' ? raw.email : '',
+            bio: typeof raw.bio === 'string' ? raw.bio : '',
+          },
           errors,
         })
       }
     }),
     (c) => {
-      const data = c.req.valid('form')
+      const data = c.req.valid('json')
       const user = createUser(data)
       return c.redirect(`/users/${user.id}`, 303)
     }
